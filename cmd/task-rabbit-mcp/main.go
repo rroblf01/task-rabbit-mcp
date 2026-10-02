@@ -35,9 +35,13 @@ const serverName = "task-rabbit-mcp"
 
 // serverVersion is a var, not a const, so the release build can stamp it with
 // -ldflags "-X main.serverVersion=…". A const is inlined at compile time and the
-// linker silently ignores -X for it, which is how a Dockerfile can pass a
-// VERSION and every published image still report 1.0.0.
-var serverVersion = "0.1.0"
+// linker silently ignores -X for it, which is how a Dockerfile can pass a VERSION
+// and every published image still report the same number.
+//
+// The fallback is the current release, not "dev", because the one thing somebody
+// asks of a running server is which version it is. The publish workflow stamps
+// the tag instead, with the leading v stripped.
+var serverVersion = "1.0.0"
 
 // instructions is what the client is told about this server, and it is the only
 // documentation an agent is guaranteed to read. An agent that has these

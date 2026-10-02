@@ -116,6 +116,49 @@ boundaries are explicit:
   Filenames come from whoever uploaded them, so every path is cleaned and
   checked to be under the target before a byte is written.
 
+## The image
+
+```bash
+docker run -d --name task-rabbit-mcp -p 127.0.0.1:8083:8083 \
+  -e TASK_RABBIT_MCP_ALLOWED_HOSTS='.example.com' \
+  ghcr.io/rroblf01/task-rabbit-mcp:latest
+```
+
+The image is published to GitHub Container Registry when a `vX.Y.Z` tag is
+pushed, for `linux/amd64` and `linux/arm64` — built `FROM scratch`, running as
+`nobody`. Pin a version tag rather than `latest`. `-p 127.0.0.1:8083:8083` binds
+the published port to loopback on purpose: the reverse proxy on the same host
+reaches it, and nothing else does.
+
+The image ships **no git**, so the git tools — `inspectTaskRepo` and
+`startTaskBranch` — will refuse with a message saying so. That is deliberate: a
+`git` binary on the far side of a tool that creates branches turns any bug in the
+tool layer into remote code execution. Run the binary directly over stdio, which
+is the shape this server is built for:
+
+```json
+{
+  "mcp": {
+    "task-rabbit": {
+      "type": "local",
+      "command": ["/absolute/path/to/bin/task-rabbit-mcp"],
+      "environment": {
+        "TASK_RABBIT_URL": "https://jirrabit.example.com",
+        "TASK_RABBIT_API_KEY": "…"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+To build the image yourself instead, `docker build -t task-rabbit-mcp .` from a
+checkout.
+
+> The first published package is **private** by default even when the repository
+> is public, so `docker pull` fails for everyone but you until you set it to
+> public once: the package's page on GitHub → Settings → Change visibility.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

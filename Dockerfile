@@ -72,12 +72,19 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 # makes sense when the client runs the binary directly. Override with
 # TASK_RABBIT_TRANSPORT=stdio when driving it through compose exec.
 #
-# Loopback by default rather than the wildcard. This server creates branches and
-# runs test suites; a wildcard bind on a published box is the exact deployment the
-# start-up guard refuses. A user who wants it public has to say so with
-# TASK_RABBIT_ADDR, and the guard then holds them to it.
+# The wildcard bind, because a container that listens on loopback cannot be reached
+# through a published port at all: `-p 8083:8083` forwards to the container's
+# network namespace, and 127.0.0.1 there is not the host. The first version of this
+# image bound loopback "for safety" and answered HTTP 000 from the host while its own
+# healthcheck passed, which is the worst combination: healthy and unusable.
+#
+# The boundary is the published port, not the bind address. `-p 127.0.0.1:8083:8083`
+# keeps it off every interface; a reverse proxy terminates TLS in front of that. A
+# deployment that publishes on all interfaces is publicly reachable, and the
+# start-up guards in the server — no default jirrabit instance, no configured
+# repository — apply to it, which is the point of them.
 ENV TASK_RABBIT_TRANSPORT=http \
-    TASK_RABBIT_ADDR=127.0.0.1:8083 \
+    TASK_RABBIT_ADDR=:8083 \
     TASK_RABBIT_PATH=/mcp
 
 EXPOSE 8083
