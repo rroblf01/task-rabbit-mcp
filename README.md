@@ -159,6 +159,56 @@ checkout.
 > is public, so `docker pull` fails for everyone but you until you set it to
 > public once: the package's page on GitHub → Settings → Change visibility.
 
+## Deploying
+
+The container image is the service shape; the binary is the shape that can do
+everything.
+
+```bash
+docker compose up -d
+```
+
+The compose file publishes `127.0.0.1:8083` on the host and the server listens on
+all interfaces inside the container, which is the arrangement that works: a
+container bound to its own loopback is unreachable through a published port.
+
+1. **Put it behind a reverse proxy if it should not be reachable directly.** The
+   streamable HTTP endpoint is unauthenticated — authorisation happens per tool
+   call through the caller's `apiKey`, but nothing stops an unauthenticated client
+   from making calls, and anyone who reaches the endpoint can consume it.
+2. **Require HTTPS at the proxy.** The transport speaks plain HTTP; terminate TLS in
+   front of it, and forward the client's address if you rate limit.
+3. **Pin to a release** rather than tracking `latest`.
+
+Two things the container cannot do, by design:
+
+- **The git tools.** The image ships no `git`, so `inspectTaskRepo` and
+  `startTaskBranch` refuse with a message saying so. Run the binary directly over
+  stdio for those — which is also the better shape for the whole server, since
+  there is then exactly one caller and it is the user.
+- **A default jirrabit instance or `TASK_RABBIT_REPOS` on a public listener.** The
+  server refuses to start rather than run those where strangers can reach them.
+  Callers pass their own credentials per call, or headers.
+
+If jirrabit is on the same host and reachable by name, point `TASK_RABBIT_URL` at
+it. If jirrabit is in a container, add `host.docker.internal` to jirrabit's
+`JIRRABIT_ALLOWED_HOSTS` or Django answers 400.
+
+### Behind a reverse proxy
+
+```nginx
+location /mcp {
+    proxy_pass http://127.0.0.1:8083/mcp;
+    proxy_http_version 1.1;
+    # The streamable HTTP transport needs the upgrade headers, or an
+    # initialize request never completes.
+    proxy_set_header Upgrade    $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host       $host;
+    proxy_buffering off;
+}
+```
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
