@@ -27,14 +27,14 @@ type Me struct {
 // enough to know what else is worth fetching: a zero there means the list call
 // would come back empty and can be skipped.
 type Issue struct {
-	ID       int    `json:"id"`
-	Key      string `json:"key"`
-	Summary  string `json:"summary"`
-	Desc     string `json:"description"`
-	Status   string `json:"status"`
-	Priority string `json:"priority"`
-	Type     string `json:"type"`
-	Project  string `json:"project"`
+	ID          int    `json:"id"`
+	Key         string `json:"key"`
+	Summary     string `json:"summary"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	Priority    string `json:"priority"`
+	Type        string `json:"type"`
+	Project     string `json:"project"`
 
 	Assignee string `json:"assignee"`
 	Reporter string `json:"reporter"`

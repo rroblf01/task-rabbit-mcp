@@ -27,6 +27,8 @@ import (
 
 	"github.com/rroblf01/task-rabbit-mcp/pkg/creds"
 	"github.com/rroblf01/task-rabbit-mcp/pkg/jira"
+	"github.com/rroblf01/task-rabbit-mcp/pkg/repos"
+	"github.com/rroblf01/task-rabbit-mcp/pkg/tools"
 )
 
 const serverName = "task-rabbit-mcp"
@@ -159,6 +161,14 @@ func run(transport, addr, path string) error {
 	policy := jira.NewHostPolicy(os.Getenv("TASK_RABBIT_ALLOWED_HOSTS"))
 	log.Printf("instance allowlist: %s", policy.Describe())
 
+	repoIndex, err := repos.Parse(os.Getenv("TASK_RABBIT_REPOS"))
+	if err != nil {
+		return err
+	}
+	// Logged whatever it says, because "the agent worked in the wrong checkout" is
+	// a failure an operator has to be able to diagnose from the log.
+	log.Printf("project to repository: %s", repoIndex.Describe())
+
 	pool := jira.NewPool(jira.PoolOptions{
 		DefaultBaseURL: defaultURL,
 		DefaultAPIKey:  defaultKey,
@@ -168,6 +178,9 @@ func run(transport, addr, path string) error {
 		// later call.
 		Validator: jira.ValidateInstance,
 	})
+
+	deps := tools.Deps{Pool: pool, Repos: repoIndex}
+	deps.Register(srv)
 
 	switch strings.ToLower(strings.TrimSpace(transport)) {
 	case "stdio":
