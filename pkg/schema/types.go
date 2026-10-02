@@ -46,3 +46,24 @@ type MaterializeAttachmentsArgs struct {
 	// needs the log.
 	InlineText bool `json:"inlineText,omitempty" jsonschema:"description,Also return the contents of text files (md, txt, log, json, yaml) up to 32 KB each"`
 }
+
+// ListChecksArgs is listTaskChecks' input.
+type ListChecksArgs struct {
+	// ProjectKey is used to look the repository up in the operator's
+	// TASK_RABBIT_REPOS mapping. Empty means the working directory.
+	ProjectKey string `json:"projectKey,omitempty" jsonschema:"description,jirrabit project key, to look up the repository in the operator's mapping"`
+	RepoPath   string `json:"repoPath,omitempty" jsonschema:"description,Path to the checkout. Overrides the mapping and the working directory"`
+}
+
+// RunChecksArgs is runTaskChecks' input.
+type RunChecksArgs struct {
+	// ProjectKey and RepoPath resolve which repository, the same way as
+	// listTaskChecks.
+	ProjectKey string `json:"projectKey,omitempty" jsonschema:"description,jirrabit project key, to look up the repository in the operator's mapping"`
+	RepoPath   string `json:"repoPath,omitempty" jsonschema:"description,Path to the checkout. Overrides the mapping and the working directory"`
+	// Roles are the categories to run. There is no command argument anywhere in
+	// this server: it runs what the project declares and nothing else.
+	Roles []string `json:"roles" jsonschema:"description,Roles to run: format, lint, typecheck, test, build or check"`
+	// Fix permits a check that rewrites files to actually run.
+	Fix bool `json:"fix,omitempty" jsonschema:"description,Allow checks that rewrite files to run. Without this they are skipped"`
+}
