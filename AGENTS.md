@@ -37,12 +37,18 @@ mechanical and checkable; everything judgement-shaped is the agent's.
 ## Architecture
 
 ```
-cmd/task-rabbit-mcp/     # entrypoint: env parsing, transport, tool registration
+cmd/task-rabbit-mcp/     # entrypoint: env parsing, transport, tool registration, instructions
 cmd/healthcheck/         # sends a real MCP initialize, for the container HEALTHCHECK
 cmd/phantom/             # fails if the prose names a tool that is not registered
+cmd/probe/               # lists what a running server serves, as a real MCP client
+internal/probe/          # the stdio client those two share
 pkg/jira/                # jirrabit REST client: auth, typed errors, pool, allowlist
+pkg/creds/               # per-call credentials carried from the HTTP headers
 pkg/toolchain/           # DETECTION: reads files, executes nothing
+pkg/checks/              # runs one declared check: no shell, a timeout, capped output
 pkg/git/                 # exec.Command("git", …) wrapper
+pkg/branch/              # branch name proposals derived from an issue
+pkg/repos/               # jirrabit project key -> local checkout
 pkg/confirm/             # two-step HMAC handshake for the branch creation
 pkg/schema/              # typed argument structs
 pkg/tools/               # one file per tool group
@@ -51,13 +57,31 @@ pkg/tools/               # one file per tool group
 Request flow: a handler binds its arguments → resolves the jirrabit instance the
 call names (arguments, then HTTP headers, then the operator default) → the client
 calls `/api/v1/` → jirrabit answers with its own DTO → returned as MCP text
-content.
+content. The repository a call acts on is resolved separately, and reported:
+`repoPath`, then the operator's mapping by project key, then the working directory.
 
 **jirrabit's DTO is returned as-is.** There is no Jira re-shaping layer here, no
 ADF conversion and no cursor synthesis. An agent working on a task wants the
 issue as jirrabit stores it — Markdown in, Markdown out — and every translation
 between vocabularies is a place for a payload to mean something other than what
 the tracker holds.
+
+## The tools
+
+| Tool | Reads | Writes |
+|---|---|---|
+| `loadTaskContext` | issue, comments, worklogs, links, attachment metadata, linked branches, custom fields, wiki | — |
+| `materializeTaskAttachments` | attachment bytes | files, outside any checkout |
+| `inspectTaskRepo` | git state, detected checks | — |
+| `startTaskBranch` | git state | one branch, and a branch link on the issue |
+| `listTaskChecks` | project files | — |
+| `runTaskChecks` | — | whatever the project declares, never a shell |
+| `reportTaskProgress` | the issue | a comment, an optional status, an optional branch link |
+
+Adding one means: a `pkg/schema` struct, a registration in `pkg/tools.Register`, a
+description that says what it does **not** do, and a phantom check that stays
+green. The prose is part of the interface and no test other than `cmd/phantom`
+reads it.
 
 ## Design decisions that are not obvious from the code
 
@@ -134,7 +158,39 @@ the tracker holds.
 - **Attachments never touch the working tree.** A filename comes from whoever
   uploaded the file, so it is cleaned, checked to be under the target directory,
   and written outside the repository — otherwise every task with a screenshot
-  shows up as untracked noise in `git status`.
+  shows up as untracked noise in `git status`. The tool has no argument that names
+  a destination at all, which is a stronger version of the same guarantee than
+  validating one.
+- **A tool's verdict is not always its exit code.** `gofmt -l` prints the files it
+  would change and exits 0 either way, which is right for a tool meant to be read
+  by a person and a trap for anything judging on exit status: a repository with
+  nine unformatted files reports "passed". `Check.NonEmptyOutputFails` marks the
+  checks whose verdict is their output, and `Result.Verdict` says which was used.
+  Found by running the checks against a deliberately misformatted repository, not
+  by reading the code.
+- **An idempotent endpoint is not idempotent under repetition.** jirrabit's branch
+  link is unique per issue, branch **and commit**, so posting the same branch with a
+  new sha each time is a new row every time. `reportTaskProgress` therefore links a
+  branch only when the issue has no link for it, and puts the sha in the comment.
+- **A remote is not necessarily a URL.** A local clone's `origin` is often a
+  filesystem path, and jirrabit validates `repo_url` as a URL: sending it turned
+  "the branch is now in your checkout" into a 400 and a link that silently failed.
+  Only a remote with a real scheme is sent.
+- **Ask git, do not guess.** `git check-ref-format --branch` is the authority on
+  branch names. Writing the test against real git corrected two assumptions: it
+  accepts a 300-character name and `refs/heads/nope` in that mode, while refusing
+  `HEAD`. A hand-rolled regex would have been wrong in both directions.
+- **An exemption list needs its own test.** `cmd/phantom` allows the instructions
+  to name jirrabit-mcp's tools, since an agent running both servers has them and
+  prose that never names a tool produces useless instructions. That is a hole in
+  the check by design, so the list is tested for the reason each entry exists, and
+  the verb pattern covers both vocabularies — otherwise prose naming a
+  jirrabit-mcp tool that no longer existed would pass, which is the same failure
+  wearing a different tool's name.
+- **A map in a struct is shared by a shallow copy.** `confirm.Preview.Detail` is a
+  map, so `changed := preview` and then `changed.Detail["x"] = 1` mutates the
+  original and the digest stops describing what the user saw. Callers that need a
+  second version build a new `Preview`, and the digest doc says so.
 
 ## Conventions
 
@@ -169,12 +225,35 @@ go test ./...
 go vet ./...
 gofmt -l .                                  # must print nothing
 
-# No jirrabit and no git needed. Scans the instructions and every tool
+# No jirrabit and no git repository needed. Scans the instructions and every tool
 # description for tool-shaped names that are not registered, and prints the count.
 go run ./cmd/phantom -server ./bin/task-rabbit-mcp
+
+# What a running server actually serves, as a real MCP client.
+go run ./cmd/probe -server ./bin/task-rabbit-mcp
 ```
 
-The hermetic tests are the coverage that matters: fake jirrabit over `httptest`,
-real repositories in `t.TempDir()` created with `git init -b main`, and one
-fixture directory per supported toolchain so a detection table cannot rot without
-a test noticing.
+The hermetic tests are the coverage that matters: a fake jirrabit over `httptest`,
+real repositories built with `git init -b main` and a bare origin, and one fixture
+directory per supported toolchain so a detection table cannot rot without a test
+noticing. Nothing in CI needs a jirrabit, a network or a git identity.
+
+Two things the fakes have to work around, both of which are the guards behaving
+correctly rather than obstacles to route around:
+
+- `ValidateTarget` refuses a caller-supplied loopback URL, so the fake binds every
+  interface and the tests reach it through a real address.
+- The makefile-detection test plants a recipe that touches a file and fails if the
+  file appears. That is the test that pins "detection never executes".
+
+Against a real instance, drive the binary as a client rather than the packages:
+
+```bash
+TASK_RABBIT_URL=… TASK_RABBIT_API_KEY=… \
+  ./bin/task-rabbit-mcp            # stdio, then send JSON-RPC lines to it
+```
+
+The full loop was verified this way: `loadTaskContext` → `inspectTaskRepo` →
+two-step `startTaskBranch` → a commit → `runTaskChecks` → `reportTaskProgress`,
+against a live jirrabit and a real clone, checking afterwards that the issue had
+one comment, the new status and exactly one branch link.
