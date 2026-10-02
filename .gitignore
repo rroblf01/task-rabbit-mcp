@@ -1,0 +1,16 @@
+# Build artifacts
+/bin/
+/task-rabbit-mcp
+/task-rabbit-mcp.exe
+
+# Local configuration. `.env.example` is tracked; `.env` is not.
+.env
+
+# Scratch space for materialised attachments. Never inside the repository:
+# a task that writes an issue's screenshots into the working tree shows up
+# in `git status` as untracked noise the agent then has to reason about.
+.task-rabbit/
+
+# Editor / OS noise
+.DS_Store
+*.swp
