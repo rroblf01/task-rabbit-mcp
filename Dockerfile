@@ -22,6 +22,16 @@ ARG VERSION=dev
 # out; the builder itself makes no outbound requests.
 RUN apk add --no-cache ca-certificates
 
+# /tmp for the runtime stage, which cannot create one for itself: the final image
+# is FROM scratch, so it has no directories to create, and the process runs as 65534
+# with the root filesystem owned by root and mode 755. materializeTaskAttachments
+# writes into the temp directory, and without this it fails with "mkdir /tmp:
+# permission denied" — which is exactly what the first published image did.
+#
+# 1777 rather than 777: the sticky bit is what makes a shared temp directory safe,
+# and it is the mode every real /tmp has.
+RUN mkdir -p /out/tmp && chmod 1777 /out/tmp
+
 WORKDIR /src
 
 # Dependencies first: they change rarely, so this layer survives source edits.
@@ -67,6 +77,10 @@ FROM scratch
 COPY --from=builder /out/task-rabbit-mcp /task-rabbit-mcp
 COPY --from=builder /out/healthcheck /healthcheck
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# --chmod is load-bearing: COPY does not preserve the source directory's mode, so
+# /tmp arrived as 0755 and nobody still could not write to it. This is the only way
+# to set a mode in a FROM scratch stage, which has no shell to chmod with.
+COPY --from=builder --chmod=1777 /out/tmp /tmp
 
 # streamable HTTP by default: a containerised server is a service, and stdio only
 # makes sense when the client runs the binary directly. Override with

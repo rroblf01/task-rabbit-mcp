@@ -28,6 +28,105 @@ This process is a **pure MCP server**. It holds no AI provider credentials and
 makes no model calls; it registers tools and does the work. The MCP client
 (Claude Code, OpenCode, …) owns the model.
 
+## "Realiza esta tarea"
+
+This server exists to be run **next to**
+[jirrabit-mcp](https://github.com/rroblf01/jirrabit-mcp) and driven by an agent
+that has been told to work a jirrabit issue. Once both are registered, the whole
+loop is one sentence to the agent:
+
+> Realiza esta tarea
+
+and it reads the issue, checks the repository, asks you for the branch name,
+creates the branch, does the work, runs the project's checks and writes back. The
+[workflow instructions](docs/agent-workflow.md) to paste into `CLAUDE.md` or
+`AGENTS.md` are what turn that sentence into the loop — without them the agent has
+the tools and no reason to use them in order.
+
+### OpenCode
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "jirrabit": {
+      "type": "remote",
+      "url": "https://jirrabit-mcp.ricardorobles.es/mcp",
+      "enabled": true,
+      "headers": {
+        "X-Jirrabit-Instance-Url": "https://jirrabit.ricardorobles.es",
+        "X-Jirrabit-Api-Key": "{env:JIRRABIT_API_KEY}"
+      }
+    },
+    "task-rabbit": {
+      "type": "local",
+      "command": ["/absolute/path/to/bin/task-rabbit-mcp"],
+      "environment": {
+        "TASK_RABBIT_URL": "http://localhost:8000",
+        "TASK_RABBIT_API_KEY": "{env:JIRRABIT_API_KEY}",
+        "TASK_RABBIT_WORKSPACE": "/tmp/task-rabbit"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+`task-rabbit` runs as a local process on purpose. It needs `git` and a checkout,
+and the published container image deliberately ships neither — a `git` on the far
+side of a tool that creates branches would turn any bug in the tool layer into
+remote code execution.
+
+`TASK_RABBIT_URL` and `TASK_RABBIT_API_KEY` give it a default jirrabit, so a call
+names only the issue. Point them at your own instance and key; a local jirrabit on
+`localhost:8000` is the normal case.
+
+### Claude Code
+
+```bash
+# The tracker: the public instance, credentials as headers.
+claude mcp add --transport http jirrabit https://jirrabit-mcp.ricardorobles.es/mcp --scope user \
+  --header "X-Jirrabit-Instance-Url: https://jirrabit.ricardorobles.es" \
+  --header "X-Jirrabit-Api-Key: $JIRRABIT_API_KEY"
+
+# The task server: a process on this machine, because it runs git.
+claude mcp add task-rabbit /absolute/path/to/bin/task-rabbit-mcp --scope user \
+  -e TASK_RABBIT_URL=http://localhost:8000 \
+  -e TASK_RABBIT_API_KEY="$JIRRABIT_API_KEY"
+```
+
+### What the agent needs to be told
+
+The tools' own descriptions say what each one does. What they cannot say is the
+order, and that some of the steps belong to the user rather than to the agent.
+Copy this into `CLAUDE.md` or `AGENTS.md`:
+
+```markdown
+## Working a jirrabit task
+
+When I say "Realiza esta tarea" (or "do this task") about a jirrabit issue, work
+it end to end with the `task-rabbit` MCP server and `jirrabit-mcp`:
+
+1. `loadTaskContext` with the issue key. Never start before this: the acceptance
+   criteria, the detail in the comments and the screenshots are all in there.
+2. `materializeTaskAttachments` for anything worth opening.
+3. `inspectTaskRepo`. If it reports a blocker — a dirty tree, a detached HEAD —
+   deal with it or tell me, do not work around it.
+4. `listTaskChecks`, so you know how this project is validated.
+5. Ask me for the branch name and show me the proposals from the brief. Then wait.
+6. `startTaskBranch`, twice: the preview, then the preview again with `confirm`
+   once I have agreed to it.
+7. Do the work. You write the code; this server does not.
+8. `runTaskChecks` for the roles that apply. Individual roles, not `check`.
+9. `reportTaskProgress`, naming the checks you ran and their verdict.
+
+Use jirrabit-mcp for the tracker's own operations: creating issues, transitions,
+comments and worklogs that are not the report at the end.
+```
+
+Full version, with what to do when a step refuses:
+[docs/agent-workflow.md](docs/agent-workflow.md).
+
 ## What it does, and what it deliberately does not
 
 The server's job is the part of "do this task" that is *mechanical and
@@ -129,6 +228,11 @@ pushed, for `linux/amd64` and `linux/arm64` — built `FROM scratch`, running as
 `nobody`. Pin a version tag rather than `latest`. `-p 127.0.0.1:8083:8083` binds
 the published port to loopback on purpose: the reverse proxy on the same host
 reaches it, and nothing else does.
+
+Attachments are written under `/tmp/task-rabbit` in the container, which is
+created in the image with mode 1777 so the `nobody` user can write there. Point
+`TASK_RABBIT_WORKSPACE` at a mounted volume to keep them past the container's
+lifetime.
 
 The image ships **no git**, so the git tools — `inspectTaskRepo` and
 `startTaskBranch` — will refuse with a message saying so. That is deliberate: a

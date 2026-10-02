@@ -1,9 +1,11 @@
 package tools
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -439,5 +441,38 @@ func TestMaterializeWritesNothingInsideARepository(t *testing.T) {
 	}
 	if out.Dir == "" || out.Written == 0 {
 		t.Errorf("nothing was written: %+v", out)
+	}
+}
+
+// The work directory is operator configuration, and both ways of getting it wrong
+// look like a bug in this server unless the error says what to change.
+func TestWorkspaceHintNamesTheFix(t *testing.T) {
+	// A relative path is a mistake whatever the underlying error was, so the hint
+	// still fires with a generic failure.
+	relative := workspaceHint("task-rabbit", errors.New("something else"))
+	if !strings.Contains(relative, "absolute") {
+		t.Errorf("a relative work directory should say so: %q", relative)
+	}
+
+	denied := workspaceHint("/tmp/task-rabbit", &os.PathError{Op: "mkdir", Path: "/tmp", Err: syscall.EACCES})
+	if !strings.Contains(denied, "permission denied") && !strings.Contains(denied, "cannot write") {
+		t.Errorf("a permission failure should be named: %q", denied)
+	}
+	if !strings.Contains(denied, "TASK_RABBIT_WORKSPACE") || !strings.Contains(denied, "volume") {
+		t.Errorf("the operator needs to be told what to set: %q", denied)
+	}
+
+	missing := workspaceHint("/nowhere/task-rabbit", &os.PathError{Op: "mkdir", Path: "/nowhere", Err: syscall.ENOENT})
+	if !strings.Contains(missing, "does not exist") {
+		t.Errorf("a missing parent should be named: %q", missing)
+	}
+
+	if got := workspaceHint("/absolute/path", errors.New("disk full")); got != "" {
+		t.Errorf("an ordinary failure should add nothing, got %q", got)
+	}
+	// And a nil error must not panic: a helper that formats a hint should not be
+	// the thing that crashes while reporting a different failure.
+	if got := workspaceHint("/absolute/path", nil); got != "" {
+		t.Errorf("a nil error should add nothing, got %q", got)
 	}
 }

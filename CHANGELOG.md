@@ -30,6 +30,48 @@ checkout.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-02
+
+### Fixed
+
+- **The container image had no writable `/tmp`, so `materializeTaskAttachments`
+  could not work in it.** The image is `FROM scratch`, which means it ships no
+  directories at all, and the process runs as uid 65534 with the root filesystem
+  owned by root and mode 755. Writing an attachment into the temp directory
+  therefore failed with `mkdir /tmp: permission denied`. Found by deploying 1.0.0
+  and calling the tool against it. The builder stage now creates the directory
+  with mode 1777 and the runtime stage copies it in.
+
+  The `COPY` needs `--chmod=1777`, which is load-bearing: `COPY` does not preserve
+  a source directory's mode, so the first attempt arrived as 0755 and nobody still
+  could not write to it. `--chmod` is the only way to set a mode in a `FROM
+  scratch` stage, which has no shell to `chmod` with.
+
+- **Documented how to drive this with an agent.** `docs/agent-workflow.md` is the
+  instruction block to paste into `CLAUDE.md` or `AGENTS.md`, so "Realiza esta
+  tarea" means a specific nine-step loop rather than whatever the agent improvises.
+  It covers what the tool descriptions cannot: the order, the two steps that belong
+  to the user rather than to the agent, which server answers which question, and
+  what to do when each step refuses. The README's quickstart configures
+  `task-rabbit-mcp` and `jirrabit-mcp` together for OpenCode and for Claude Code.
+
+- **`cmd/phantom` checks the README, `AGENTS.md`, the workflow document and the
+  changelog for the same thing it checks the instructions for.** The prose an
+  agent reads is only half of it: a human wires the server into a client from the
+  README, and copies the workflow block into `CLAUDE.md` verbatim. Extending the
+  check immediately caught two tool names that had been invented in the
+  instructions — `listTaskStatuses` and `listJiraIssueHistory`, neither of which
+  exists in jirrabit-mcp — which is the third time this repository's own prose
+  named something that was not there, and the reason the exemption list is now
+  tested against the sibling project's real registrations.
+
+- **`materializeTaskAttachments` now says what to change when the work directory
+  is unusable.** "Permission denied" is a fact; the operator needs to know that
+  either the image did not create the directory or `TASK_RABBIT_WORKSPACE` points
+  somewhere unwritable, and that a mounted volume is the way to fix it. A relative
+  `TASK_RABBIT_WORKSPACE` is also called out: it is resolved against the process's
+  working directory, which in a container is `/`.
+
 ## [1.0.0] - 2026-10-02
 
 First release. It is a companion to

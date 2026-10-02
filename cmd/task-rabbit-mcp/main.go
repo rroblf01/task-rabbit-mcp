@@ -134,8 +134,9 @@ left. Name the checks you ran and their verdict, because a report that omits how
 verified is the thing that makes a reviewer do it again.
 
 statusId is validated against the instance's workflow. If it is refused, that is a property of the
-workflow, not a mistake to work around: read the error and say which transition is forbidden. Call
-listTaskStatuses in jirrabit-mcp if you need to see what the workflow allows from the current status.
+workflow, not a mistake to work around: read the error and say which transition is forbidden. listJiraStatuses
+on jirrabit-mcp tells you which statuses exist, and listJiraTransitions which are reachable from the current
+one, so resolve an id rather than guessing a number.
 
 The branch is linked to the issue only if it is not linked there already. jirrabit's branch link is
 unique per issue, branch and commit, so linking the same branch again with a new commit each time would

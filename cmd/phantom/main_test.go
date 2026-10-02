@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -116,4 +119,87 @@ func TestScanIsDeterministic(t *testing.T) {
 			}
 		}
 	}
+}
+
+// A documentation file naming a tool that does not exist is the same failure as an
+// instruction doing it: the reader copies the name into a client and gets "tool not
+// found", with no way to tell a typo from a missing feature.
+func TestScanFilesCatchesADocumentedToolThatIsGone(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	if err := os.WriteFile("README.md", []byte("call startTaskBranch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	found := scanFiles(report("", "loadTaskContext", "startTaskBranch"))
+	if len(found) != 0 {
+		t.Errorf("a registered tool was reported: %+v", found)
+	}
+
+	if err := os.WriteFile("README.md", []byte("call startTaskBranch and addMigrationNote\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found = scanFiles(report("", "loadTaskContext", "startTaskBranch"))
+	if len(found) != 1 || found[0].name != "addMigrationNote" {
+		t.Fatalf("found = %+v, want addMigrationNote", found)
+	}
+	if !strings.Contains(found[0].where, "README.md") {
+		t.Errorf("where = %q, want the file named", found[0].where)
+	}
+}
+
+// A document that does not exist is not a failure: the command runs from the
+// repository root and should not require every document to be present.
+func TestScanFilesSkipsMissingDocuments(t *testing.T) {
+	chdir(t, t.TempDir())
+	if found := scanFiles(report("", "loadTaskContext")); len(found) != 0 {
+		t.Errorf("found = %+v with no documents present", found)
+	}
+}
+
+// The exemption list is a hole in the check, and a hole that grows by hand. Each
+// entry must be a real tool in the sibling project, or it is hiding a typo.
+func TestEveryForeignToolExistsInTheSiblingProject(t *testing.T) {
+	repo := os.Getenv("JIRRABIT_MCP_REPO")
+	if repo == "" {
+		t.Skip("set JIRRABIT_MCP_REPO to a jirrabit-mcp checkout to check the exemptions against it")
+	}
+	entries, err := os.ReadDir(filepath.Join(repo, "pkg", "tools"))
+	if err != nil {
+		t.Fatalf("cannot read the sibling's tools: %v", err)
+	}
+	registered := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(repo, "pkg", "tools", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range siblingToolPattern.FindAllStringSubmatch(string(raw), -1) {
+			registered[match[1]] = true
+		}
+	}
+	for name := range foreignTools {
+		if !registered[name] {
+			t.Errorf("%s is exempt but jirrabit-mcp does not register it, so the exemption is hiding a typo",
+				name)
+		}
+	}
+}
+
+var siblingToolPattern = regexp.MustCompile(`NewTool\("([A-Za-z0-9]+)"`)
+
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
 }

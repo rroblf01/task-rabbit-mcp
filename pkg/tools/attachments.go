@@ -149,7 +149,8 @@ func materializeTaskAttachments(d Deps) func(ctx context.Context, req mcp.CallTo
 		base := workspaceDir()
 		dir := filepath.Join(base, sanitizeSegment(issueKey))
 		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return toolErrorf("cannot create the work directory %s: %v", dir, err)
+			return toolErrorf("cannot create the work directory %s: %v.%s",
+				dir, err, workspaceHint(base, err))
 		}
 
 		report := materialisedReport{
@@ -316,6 +317,30 @@ func safeFilename(id int, name string, used map[string]bool) string {
 func sanitizeSegment(segment string) string {
 	cleaned := safeFilename(0, segment, map[string]bool{})
 	return strings.TrimPrefix(cleaned, "0-")
+}
+
+// workspaceHint explains the two failures an operator actually hits, both of which
+// look like a bug in this server rather than a misconfigured destination.
+func workspaceHint(base string, err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case !filepath.IsAbs(base):
+		// A relative TASK_RABBIT_WORKSPACE is resolved against a working directory
+		// that in a container is /.
+		return " The work directory is relative, so it is resolved against the process's working " +
+			"directory, which in a container is /. Set TASK_RABBIT_WORKSPACE to an absolute path, " +
+			"ideally a mounted volume."
+	case strings.Contains(err.Error(), "permission denied"):
+		return " The process cannot write there. In the container image that means the work directory " +
+			"was not created at build time or TASK_RABBIT_WORKSPACE points somewhere unwritable; " +
+			"point it at a mounted volume you own, or run the binary directly."
+	case os.IsNotExist(err):
+		return " The parent directory does not exist and could not be created."
+	default:
+		return ""
+	}
 }
 
 func workspaceDir() string {

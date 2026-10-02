@@ -218,6 +218,18 @@ reads it.
   `/bin/sh` and a shell-form check reports healthy without running. `main.
   serverVersion` stays a `var`: `-X` is silently ignored for a `const`.
 
+## Documentation
+
+`README.md` has the quickstart: both servers configured together for OpenCode and
+for Claude Code, and the instruction block to paste into `CLAUDE.md`/`AGENTS.md`
+so "Realiza esta tarea" resolves to a specific loop rather than to improvisation.
+`docs/agent-workflow.md` is the long version: the order, the steps that belong to
+the user, and what to do when each step refuses.
+
+Both are kept in step with the tools by hand, and the failure is the same one the
+phantom check exists for — a documented tool that does not exist. If you register a
+tool or change a name, update them.
+
 ## Verification
 
 ```bash

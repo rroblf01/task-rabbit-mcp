@@ -1,17 +1,24 @@
-// Command phantom fails when the server's prose names a tool that is not
+// Command phantom fails when this repository's prose names a tool that is not
 // registered.
 //
-// The prose is part of the interface. The server instructions are the only
-// documentation an agent is guaranteed to read, and a tool description is what
-// an agent reads when deciding between two tools. If either names a tool that
-// does not exist, the agent calls it, gets "tool not found", and has no way to
-// recover — it does not know whether it misspelled a tool or whether the feature
-// is unavailable.
+// The prose is part of the interface, and it is four different things:
 //
-// This is not hypothetical. In the sibling project, editJiraIssue's description
-// told agents to use transitionJiraIssue to change status, and the README
-// repeated it, for a release, while no such tool existed. Nothing caught it,
-// because no test read the prose.
+//   - the server instructions, the only documentation an agent is guaranteed to
+//     read before choosing a tool;
+//   - each tool's own description, which is what an agent reads when deciding
+//     between two of them;
+//   - the README and docs/, which is what a human reads before wiring the server
+//     into a client, and what they copy into CLAUDE.md verbatim;
+//   - AGENTS.md, which is read by an agent working on this repository.
+//
+// If any of them names a tool that does not exist, the reader calls it, gets
+// "tool not found", and has no way to recover — they cannot tell a typo from a
+// missing feature.
+//
+// This is not hypothetical. In the sibling project, a description told agents to
+// use a tool that had not been written yet, and the README repeated it, for a
+// release. Two such mistakes happened here while it was being built: one in the
+// instructions and one in this file's own first draft.
 //
 // It needs a binary and nothing else — no jirrabit, no git, no network — so it
 // runs in CI on every push.
@@ -39,8 +46,10 @@ func main() {
 	}
 
 	phantoms := scan(report)
-	fmt.Printf("checking %d tools, %d bytes of instructions and %d foreign exemptions\n",
-		len(report.Tools), len(report.Instructions), len(foreignTools))
+	phantoms = append(phantoms, scanFiles(report)...)
+
+	fmt.Printf("checking %d tools, %d bytes of instructions, %d documents and %d foreign exemptions\n",
+		len(report.Tools), len(report.Instructions), len(docFiles), len(foreignTools))
 
 	if len(phantoms) == 0 {
 		if !report.ToolsSupported {
@@ -53,10 +62,20 @@ func main() {
 	for _, p := range phantoms {
 		fmt.Fprintf(os.Stderr,
 			"%s is named in %s but no such tool is registered here, and it is not in the foreign-tools "+
-				"exemptions either\n", p.name, p.where)
+				"exemptions either. Either register the tool, or fix the name.\n", p.name, p.where)
 	}
 	os.Exit(1)
 }
+
+// docFiles are the prose a reader copies from, or an agent reads before touching
+// the server. Paths are relative to the repository root, which is the working
+// directory the command is documented to run from.
+//
+// CHANGELOG.md is deliberately absent. It is a record of what was true, including
+// names that have since changed, and a release note that says "this tool used to be
+// called X" is doing its job. Rewriting history so a linter is happy is the wrong
+// trade, and a reader is not wiring a client from a changelog entry.
+var docFiles = []string{"README.md", "AGENTS.md", "docs/agent-workflow.md"}
 
 type phantom struct{ name, where string }
 
@@ -73,11 +92,18 @@ type phantom struct{ name, where string }
 // Keeping this list and the prose in the same file is the point. An exemption list
 // scattered from the text it exempts is the sort of thing that silently rots.
 var foreignTools = map[string]string{
-	"listTaskStatuses":     "jirrabit-mcp: which status ids exist, needed to move an issue",
-	"getJiraCurrentUser":   "jirrabit-mcp: who the API key belongs to",
-	"listJiraIssueHistory": "jirrabit-mcp: the field-level changelog of an issue",
-	"listJiraSprints":      "jirrabit-mcp: the sprints an issue could move to",
+	"listJiraStatuses":      "jirrabit-mcp: which status ids exist, needed to move an issue",
+	"listJiraTransitions":   "jirrabit-mcp: which statuses the workflow allows from the current one",
+	"getJiraCurrentUser":    "jirrabit-mcp: who the API key belongs to",
+	"getJiraIssueChangelog": "jirrabit-mcp: the field-level changelog of an issue",
+	"listJiraSprints":       "jirrabit-mcp: the sprints an issue could move to",
+	"getJiraIssue":          "jirrabit-mcp: one issue, where loadTaskContext does not apply",
 }
+
+// Adding a tool to a document you did not write is how this list grows. The test
+// below checks each entry exists in the sibling project by name, because a name
+// that is neither registered here nor present there is an exemption that hides a
+// typo, which is worse than no exemption at all.
 
 // toolNamePattern matches the shape of a tool name: a verb followed by a
 // capitalised subject.
@@ -96,6 +122,40 @@ var toolNamePattern = regexp.MustCompile(
 	`\b(?:load|inspect|start|list|run|report|materialize|find|check|` +
 		`get|create|edit|delete|transition|search|watch|assign|archive|clone|restore|` +
 		`add|update|close|open)[A-Z][A-Za-z]*\b`)
+
+// scanFiles applies the same check to the repository's own documentation.
+//
+// A missing file is not an error: the command is documented to run from the
+// repository root, and should not require every document to exist to check the
+// ones that do.
+func scanFiles(report probe.Report) []phantom {
+	registered := report.Names()
+	var found []phantom
+
+	for _, name := range docFiles {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			continue
+		}
+		for _, candidate := range toolNamePattern.FindAllString(string(raw), -1) {
+			if registered[candidate] {
+				continue
+			}
+			if _, foreign := foreignTools[candidate]; foreign {
+				continue
+			}
+			found = append(found, phantom{name: candidate, where: name})
+		}
+	}
+
+	sort.Slice(found, func(i, j int) bool {
+		if found[i].where != found[j].where {
+			return found[i].where < found[j].where
+		}
+		return found[i].name < found[j].name
+	})
+	return found
+}
 
 func scan(report probe.Report) []phantom {
 	registered := report.Names()
