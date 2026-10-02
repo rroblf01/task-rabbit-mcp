@@ -103,3 +103,25 @@ type StartBranchArgs struct {
 	// Confirm carries the token from the first call.
 	Confirm string `json:"confirm,omitempty" jsonschema:"description,Token returned by the first call. Required to actually create the branch"`
 }
+
+// ReportProgressArgs is reportTaskProgress' input.
+type ReportProgressArgs struct {
+	Target
+	// IssueKey is the issue being reported on.
+	IssueKey string `json:"issueKey" jsonschema:"description,Issue key such as WEB-142"`
+	// Summary is the body of the comment, in Markdown, written for whoever reads
+	// the issue next.
+	Summary string `json:"summary" jsonschema:"description,What was done, what was verified and what is left. Markdown"`
+	// StatusID moves the issue, if the workflow allows the transition.
+	StatusID *int `json:"statusId,omitempty" jsonschema:"description,Status id to move the issue to, if the workflow allows it"`
+	// Branch is recorded on the issue if it is not linked there already.
+	Branch string `json:"branch,omitempty" jsonschema:"description,Branch that implements the issue. Linked only if this issue has no link for it yet"`
+	// CommitSha goes in the comment rather than into the branch link.
+	CommitSha string `json:"commitSha,omitempty" jsonschema:"description,Commit that was verified, for the record"`
+	// RepoURL is recorded alongside the branch when it is a real URL.
+	RepoURL string `json:"repoUrl,omitempty" jsonschema:"description,Repository URL for the branch link"`
+	// ProjectKey and RepoPath are accepted so this tool resolves a repository the
+	// same way as the others, and can read one back.
+	ProjectKey string `json:"projectKey,omitempty" jsonschema:"description,jirrabit project key, for resolving a repository"`
+	RepoPath   string `json:"repoPath,omitempty" jsonschema:"description,Path to the checkout"`
+}

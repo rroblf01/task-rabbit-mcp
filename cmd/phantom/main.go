@@ -39,8 +39,8 @@ func main() {
 	}
 
 	phantoms := scan(report)
-	fmt.Printf("checking %d tools and %d bytes of instructions\n",
-		len(report.Tools), len(report.Instructions))
+	fmt.Printf("checking %d tools, %d bytes of instructions and %d foreign exemptions\n",
+		len(report.Tools), len(report.Instructions), len(foreignTools))
 
 	if len(phantoms) == 0 {
 		if !report.ToolsSupported {
@@ -51,12 +51,33 @@ func main() {
 		return
 	}
 	for _, p := range phantoms {
-		fmt.Fprintf(os.Stderr, "%s is named in %s but no such tool is registered\n", p.name, p.where)
+		fmt.Fprintf(os.Stderr,
+			"%s is named in %s but no such tool is registered here, and it is not in the foreign-tools "+
+				"exemptions either\n", p.name, p.where)
 	}
 	os.Exit(1)
 }
 
 type phantom struct{ name, where string }
+
+// foreignTools are tool names this server's prose may reference even though they
+// are not registered here, because they belong to jirrabit-mcp and an agent
+// running both servers has them.
+//
+// The alternative is to write prose that never names a tool, which produces
+// instructions like "resolve the status id somehow" — technically passing this
+// check and useless to the agent reading it. Naming the real tool is better, and
+// the exemption is narrower than that: a name here has to exist in the sibling
+// server and be relevant to what this server does.
+//
+// Keeping this list and the prose in the same file is the point. An exemption list
+// scattered from the text it exempts is the sort of thing that silently rots.
+var foreignTools = map[string]string{
+	"listTaskStatuses":     "jirrabit-mcp: which status ids exist, needed to move an issue",
+	"getJiraCurrentUser":   "jirrabit-mcp: who the API key belongs to",
+	"listJiraIssueHistory": "jirrabit-mcp: the field-level changelog of an issue",
+	"listJiraSprints":      "jirrabit-mcp: the sprints an issue could move to",
+}
 
 // toolNamePattern matches the shape of a tool name: a verb followed by a
 // capitalised subject.
@@ -65,8 +86,16 @@ type phantom struct{ name, where string }
 // word to exempt; the cost of a miss is a broken agent. A tighter pattern would
 // be wrong in exactly the case that matters — a prose reference to a tool
 // somebody renamed, which is the bug this exists to catch.
+//
+// The verb list covers both vocabularies: this server's (load, inspect, start,
+// run, report, materialize) and jirrabit-mcp's (create, edit, delete,
+// transition, search, watch, assign, archive, clone, restore). Without the second
+// set, prose naming a jirrabit-mcp tool that no longer exists would pass — which is
+// the same failure this check exists to catch, wearing a different tool's name.
 var toolNamePattern = regexp.MustCompile(
-	`\b(?:load|inspect|start|list|run|report|materialize|find|check|get)[A-Z][A-Za-z]*\b`)
+	`\b(?:load|inspect|start|list|run|report|materialize|find|check|` +
+		`get|create|edit|delete|transition|search|watch|assign|archive|clone|restore|` +
+		`add|update|close|open)[A-Z][A-Za-z]*\b`)
 
 func scan(report probe.Report) []phantom {
 	registered := report.Names()
@@ -74,9 +103,13 @@ func scan(report probe.Report) []phantom {
 
 	note := func(where, text string) {
 		for _, candidate := range toolNamePattern.FindAllString(text, -1) {
-			if !registered[candidate] {
-				found[candidate] = where
+			if registered[candidate] {
+				continue
 			}
+			if _, foreign := foreignTools[candidate]; foreign {
+				continue
+			}
+			found[candidate] = where
 		}
 	}
 

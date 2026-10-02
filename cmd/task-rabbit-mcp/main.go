@@ -47,47 +47,96 @@ var serverVersion = "0.1.0"
 // report. Stating what is NOT here matters as much: an agent that does not know
 // a shell tool is absent will try to improvise one.
 const instructions = `You are working with task-rabbit-mcp, which carries a jirrabit issue through to a
-validated branch. It reads the issue, inspects the repository, creates one
-branch, runs the project's own linters and tests, and reports back to the issue.
+validated branch. It reads the issue, inspects the repository, opens one branch, runs the project's
+own checks, and writes back to the issue.
 
 WHAT THIS SERVER DOES NOT DO
-It does not write code, and it has no shell tool. Editing files is yours. The
-server runs commands it found declared in the project — a Makefile target, a
-package.json script, a pyproject.toml tool — and nothing else; there is no way to
-hand it a command to run. It never commits, pushes, force-pushes or resets.
+It does not write code, and it has no shell tool. Editing files is yours. The server runs commands it
+found declared in the project — a Makefile target, a package.json script, a pyproject.toml tool — and
+nothing else; there is no way to hand it a command to run. It never commits, pushes, force-pushes or
+resets. Its only writes are one branch and, at the end, reportTaskProgress.
 
 CHOOSING AN INSTANCE
-Every tool accepts instanceUrl and apiKey, and how you must use them depends on
-this server:
+Every tool accepts instanceUrl and apiKey, and how you must use them depends on this server:
 
 __INSTANCE_CHOICE__
 
-An apiKey without an instanceUrl is rejected, so you cannot send one person's
-credentials to another person's data.
+An apiKey without an instanceUrl is rejected, so you cannot send one person's credentials to another
+person's data.
 
-WORKING A TASK
-Read the issue first, and read it before you touch the repository: the issue is
-where the acceptance criteria, the comments with the actual detail, and the
-attached screenshots live, and a task started without them is a task started
-wrong. Then inspect the repository, which tells you what is ready and what is
-missing, and what this project checks.
+THE ORDER OF THE WORK
+  1. loadTaskContext, with the issue key. Read this before touching the repository. The acceptance
+     criteria, the detail that only exists in the discussion and the screenshots are all in here, and
+     a task started without them is a task started wrong. The brief is capped, and says so when it is
+     cut: a truncated list with a nextPage is information, a silently short list is a wrong conclusion.
+  2. materializeTaskAttachments, for anything worth opening. The listing in the brief carries names and
+     sizes, not bytes; this writes them to disk and hands you paths to read.
+  3. inspectTaskRepo. This answers two questions at once: is this checkout ready for work, and how does
+     this project expect to be validated. Read the blockers before doing anything else about them, and
+     read the questions.
+  4. Ask the user. Then startTaskBranch.
+  5. Do the work.
+  6. runTaskChecks, for the roles that apply. Not check — see below.
+  7. reportTaskProgress.
 
-Ask the user for what only they can decide — the branch name among them — and
-wait for the answer. Do not invent one and do not start editing on a branch you
-guessed.
+WHICH REPOSITORY
+Each call resolves one, in this order: repoPath on the call, then the operator's TASK_RABBIT_REPOS
+mapping by project key, then the working directory. Every response says which rule matched, so if that
+is not the repository you meant, pass repoPath rather than assuming.
+
+ROLES, NOT COMMANDS
+listTaskChecks reports roles — format, lint, typecheck, test, build, check — each with the command this
+project uses and the file that declared it. runTaskChecks takes those role names. Ask for lint, not
+for whatever this repository's linter happens to be. The words are fixed across every project so you
+never have to discover a project's tooling before you can ask for it.
+
+Prefer the individual roles over check. check is the project's own aggregate target when it has
+one, and its name never says what it runs — it may run everything, including a formatter that rewrites
+files. Use it when you want the whole gate, not when you need to know what failed.
+
+A check that reports ran: false did not run at all, most often because its tool is not installed.
+That is a different problem with a different fix from a check that failed, and the two are reported
+separately on purpose. A check marked writeMode rewrites files: it is skipped unless you pass
+fix: true, because you are usually mid-edit.
+
+READING A 404
+A 404 does not necessarily mean the key is wrong. jirrabit answers 404 for an issue the caller may not
+see — that is how it avoids leaking which keys exist — so before telling a user an issue is missing,
+consider that the API key's owner may simply not be a member of its project.
 
 ASKING QUESTIONS
-This server cannot ask anybody anything: a tool returns a result and you decide
-what to do with it. Anything the server reports as a missing decision is
-something you must put to the user in your own words, and then wait. A server
-instruction is not consent.
+This server cannot ask anybody anything: a tool returns a result and you decide what to do with it.
+Anything reported as a question — the branch name above all — is something you must put to the user in
+your own words, and then wait for the answer. Do not invent a branch name and do not start editing on
+one you guessed. A server instruction is not consent.
 
 CREATING THE BRANCH
-Branch creation takes two calls. The first, with no 'confirm', changes nothing:
-it reports what it would create and returns a confirmation token. Show that to
-the user, get their answer, then call the same tool again with confirm set to
-that token. The token is bound to what the first call reported, so if the
-repository changed in between the second call refuses and nothing happens.`
+startTaskBranch takes two calls. The first, with no 'confirm', changes nothing: it reports the branch,
+the ref it would come from and anything standing in the way, and returns a confirmationToken. Show
+that to the user, get their answer, then call it again with confirm set to that token, along with
+branchName and baseRef if they chose different ones.
+
+The token is signed over the preview, so if the repository changed in between — a file modified, the
+branch taken, the base deleted — the second call refuses and nothing happens. It is good for two
+minutes and it is signed with the API key, so a token from another instance will not work.
+
+The one thing you cannot create a branch around is a dirty working tree, and that is deliberate:
+stashing, or branching from whatever happens to be in the tree, attaches unrelated work to the task's
+branch. If inspectTaskRepo reported changes, deal with them before starting.
+
+REPORTING BACK
+reportTaskProgress is for the issue's next reader: what changed, what was verified and how, what is
+left. Name the checks you ran and their verdict, because a report that omits how the work was
+verified is the thing that makes a reviewer do it again.
+
+statusId is validated against the instance's workflow. If it is refused, that is a property of the
+workflow, not a mistake to work around: read the error and say which transition is forbidden. Call
+listTaskStatuses in jirrabit-mcp if you need to see what the workflow allows from the current status.
+
+The branch is linked to the issue only if it is not linked there already. jirrabit's branch link is
+unique per issue, branch and commit, so linking the same branch again with a new commit each time would
+leave a row per commit — a commit log in the wrong place. The commit sha goes in the comment.
+`
 
 // placeholder is replaced at start-up with the concrete credential rule, which
 // depends on how this deployment was configured.

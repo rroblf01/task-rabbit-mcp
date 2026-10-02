@@ -42,6 +42,22 @@ the model, and it would be one more thing running unattended on your machine.
 your project — a `Makefile` target, a `package.json` script, a `pyproject.toml`
 tool — and nothing else. It never takes a command as an argument.
 
+## The tools
+
+| Tool | What it does |
+|---|---|
+| `loadTaskContext` | One call for everything an issue knows: the issue, comments, worklogs, links, attachment metadata, branches already linked to it, custom fields, and the project wiki on request. Capped, and it says when it is cut |
+| `materializeTaskAttachments` | Writes an issue's attachments to disk and returns paths, so files are read as files instead of as megabytes of base64 |
+| `inspectTaskRepo` | Whether a checkout is ready (git state, blockers) and how this project expects to be validated, in one call |
+| `startTaskBranch` | Creates the branch, in two steps: a preview with a token, then the token plus the user's answers |
+| `listTaskChecks` | The checks this project declares, by role, with the file each came from |
+| `runTaskChecks` | Runs the checks for the roles you name. No command argument exists |
+| `reportTaskProgress` | Posts what was done to the issue, moves the status if the workflow allows, and links the branch |
+
+Roles are fixed across every repository — `format`, `lint`, `typecheck`, `test`,
+`build`, `check` — so "the lint" is the same request whatever language the project
+is in. Only the commands differ, and each result names the file that declared it.
+
 ## Build & run
 
 ```bash
