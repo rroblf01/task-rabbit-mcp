@@ -67,3 +67,39 @@ type RunChecksArgs struct {
 	// Fix permits a check that rewrites files to actually run.
 	Fix bool `json:"fix,omitempty" jsonschema:"description,Allow checks that rewrite files to run. Without this they are skipped"`
 }
+
+// InspectRepoArgs is inspectTaskRepo's input.
+//
+// It embeds Target even though a preview needs no jirrabit of its own: the same
+// tool previews startTaskBranch, and that preview carries the confirmation token,
+// which is signed with the API key. A tool whose signing key depended on where it
+// was called from would be a tool whose tokens were not portable.
+type InspectRepoArgs struct {
+	Target
+	// ProjectKey and RepoPath resolve which repository, the same way as the check
+	// tools: repoPath wins, then the operator's mapping for the project, then the
+	// working directory.
+	ProjectKey string `json:"projectKey,omitempty" jsonschema:"description,jirrabit project key, to look up the repository in the operator's mapping"`
+	RepoPath   string `json:"repoPath,omitempty" jsonschema:"description,Path to the checkout. Overrides the mapping and the working directory"`
+	// SuggestedBranch previews what startTaskBranch would do for that name, so the
+	// user can be shown a concrete plan with the repository's real state attached.
+	SuggestedBranch string `json:"suggestedBranch,omitempty" jsonschema:"description,Branch name to preview creating"`
+}
+
+// StartBranchArgs is startTaskBranch's input.
+type StartBranchArgs struct {
+	Target
+	// ProjectKey, RepoPath and IssueKey say what this is for. IssueKey is what gets
+	// the branch linked back to the issue in jirrabit.
+	ProjectKey string `json:"projectKey,omitempty" jsonschema:"description,jirrabit project key, to look up the repository in the operator's mapping"`
+	RepoPath   string `json:"repoPath,omitempty" jsonschema:"description,Path to the checkout. Overrides the mapping and the working directory"`
+	IssueKey   string `json:"issueKey,omitempty" jsonschema:"description,Issue key this branch implements, so the branch is linked back to it"`
+	// BranchName is the name to create. Omitting it on the first call is what makes
+	// the preview ask for it rather than invent it.
+	BranchName string `json:"branchName,omitempty" jsonschema:"description,Name for the new branch, e.g. demo-42-fix-login"`
+	// BaseRef is what to branch from. Omitted means the current branch's upstream,
+	// then origin's default branch, then the current branch.
+	BaseRef string `json:"baseRef,omitempty" jsonschema:"description,Ref to branch from, e.g. origin/main. Omit to use the current branch's upstream"`
+	// Confirm carries the token from the first call.
+	Confirm string `json:"confirm,omitempty" jsonschema:"description,Token returned by the first call. Required to actually create the branch"`
+}

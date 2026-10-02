@@ -63,6 +63,7 @@ func (d Deps) Register(srv *server.MCPServer) {
 	registerContextTools(s, d)
 	registerAttachmentTools(s, d)
 	registerCheckTools(s, d)
+	d.registerRepoTools(s)
 }
 
 // jsonResult marshals a value as compact JSON and returns it as tool text.
