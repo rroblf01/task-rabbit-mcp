@@ -1,0 +1,41 @@
+# task-rabbit-mcp as a service.
+#
+#   docker compose up -d
+#
+# Every setting is optional in .env. With TASK_RABBIT_URL and
+# TASK_RABBIT_API_KEY unset, this is a shared server: each caller names its own
+# instance with the instanceUrl and apiKey tool arguments. Set both to give
+# callers a default instance — and note that the port is published on every
+# interface below, which the server itself refuses to do with a default instance
+# unless .env also sets TASK_RABBIT_MCP_ALLOW_DEFAULT_INSTANCE=1.
+#
+# A deployment reachable from the internet should set
+# TASK_RABBIT_ALLOWED_HOSTS, or it will fetch whatever URL it is handed.
+#
+# The git tools need a `git` binary and a checkout, and this image ships
+# neither — see the Dockerfile for why. To use them from a container, mount a
+# real toolchain and a real checkout and point TASK_RABBIT_REPOS at it; the
+# server refuses to start with TASK_RABBIT_REPOS on a publicly-reachable
+# listener, so this Compose file binds loopback and leaves the repo mapping to
+# the operator.
+
+services:
+  task-rabbit-mcp:
+    build: .
+    image: task-rabbit-mcp:latest
+    restart: "no"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TASK_RABBIT_TRANSPORT: http
+      TASK_RABBIT_ADDR: :8083
+      TASK_RABBIT_PATH: /mcp
+    ports:
+      - "127.0.0.1:8083:8083"
+    extra_hosts:
+      # Lets a containerised server reach a jirrabit on the Docker host via
+      # http://host.docker.internal:8000. Without this the name does not resolve
+      # on Linux, which is the usual reason a containerised MCP server "cannot
+      # find" the app it is meant to proxy.
+      - "host.docker.internal:host-gateway"

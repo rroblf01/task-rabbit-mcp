@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: fmt · vet · test · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: go build
+        run: go build -o /tmp/task-rabbit-mcp ./cmd/task-rabbit-mcp/
+
+      # The prose is part of the interface. An agent that reads the server
+      # instructions and calls a tool that is not registered gets "tool not
+      # found" and cannot recover, and no unit test notices. It already happened
+      # in the sibling project: a tool description named a tool that did not
+      # exist, for a release.
+      #
+      # This needs a binary and nothing else: no jirrabit, no git, no network.
+      - name: instructions name no phantom tools
+        run: go run ./cmd/phantom -server /tmp/task-rabbit-mcp
+
+      # A tool that only compiles but cannot start would pass everything above,
+      # and the first person to find out would be a user running it. The
+      # container also verifies the Dockerfile, which nothing else does.
+      - name: docker build
+        run: docker build -t task-rabbit-mcp:ci .
+
+      - name: the image serves MCP
+        run: |
+          docker run -d --name tr-ci -p 127.0.0.1:8083:8083 task-rabbit-mcp:ci
+          for _ in $(seq 1 20); do
+            if docker exec tr-ci /healthcheck; then echo "healthy"; exit 0; fi
+            sleep 1
+          done
+          echo "the image never answered an MCP initialize"; docker logs tr-ci; exit 1
+
+      # The start-up guards are the whole reason this image binds loopback, so
+      # they are asserted rather than trusted.
+      - name: start-up guards hold
+        run: |
+          go build -o /tmp/task-rabbit-mcp ./cmd/task-rabbit-mcp/
+          if TASK_RABBIT_URL=http://localhost:8000 /tmp/task-rabbit-mcp; then
+            echo "a default instance URL without a key should have been refused"; exit 1
+          fi
+          if TASK_RABBIT_URL=http://localhost:8000 TASK_RABBIT_API_KEY=k \
+               /tmp/task-rabbit-mcp -transport http -addr :9999; then
+            echo "a default instance on a public listener should have been refused"; exit 1
+          fi
+          if TASK_RABBIT_REPOS='{"WEB":"/tmp"}' \
+               /tmp/task-rabbit-mcp -transport http -addr 0.0.0.0:9999; then
+            echo "a repo mapping on a public listener should have been refused"; exit 1
+          fi
+          echo "guards hold"
+
+      # The Compose file is what a deployer runs first, so a typo in it should
+      # fail here rather than on their machine.
+      - name: compose file is valid
+        run: docker compose config --quiet
