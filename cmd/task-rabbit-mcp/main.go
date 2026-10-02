@@ -26,6 +26,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/rroblf01/task-rabbit-mcp/pkg/creds"
+	"github.com/rroblf01/task-rabbit-mcp/pkg/jira"
 )
 
 const serverName = "task-rabbit-mcp"
@@ -150,11 +151,29 @@ func run(transport, addr, path string) error {
 		server.WithRecovery(), // a panic in one handler must not take the server down
 	)
 
+	// The library reports its own version in the User-Agent, so jirrabit's access
+	// logs say which build called. One variable, stamped by -ldflags at build time
+	// in both the binary and the image.
+	jira.Version = serverVersion
+
+	policy := jira.NewHostPolicy(os.Getenv("TASK_RABBIT_ALLOWED_HOSTS"))
+	log.Printf("instance allowlist: %s", policy.Describe())
+
+	pool := jira.NewPool(jira.PoolOptions{
+		DefaultBaseURL: defaultURL,
+		DefaultAPIKey:  defaultKey,
+		AllowedHosts:   policy,
+		// Prove a (url, key) pair addresses a jirrabit before it is cached, so a
+		// mistyped URL is one clear message instead of a parse error on every
+		// later call.
+		Validator: jira.ValidateInstance,
+	})
+
 	switch strings.ToLower(strings.TrimSpace(transport)) {
 	case "stdio":
-		return serveStdio(srv)
+		return serveStdio(srv, pool)
 	case "http", "streamable-http", "streamablehttp":
-		return serveHTTP(srv, addr, path)
+		return serveHTTP(srv, pool, addr, path)
 	default:
 		return fmt.Errorf("unknown transport %q: use stdio or http", transport)
 	}
@@ -173,8 +192,9 @@ them anyway when the user names a different jirrabit — the arguments always wi
 }
 
 // serveStdio speaks MCP over stdin/stdout. The client owns the process, so a
-// clean shutdown is just a return.
-func serveStdio(srv *server.MCPServer) error {
+// clean shutdown is just a return, and no sweeper is needed: the pool dies with
+// the process.
+func serveStdio(srv *server.MCPServer, pool *jira.Pool) error {
 	log.Printf("ready on stdio")
 	// ServeStdio installs its own signal handling and returns on SIGINT/SIGTERM.
 	return server.ServeStdio(srv)
@@ -182,7 +202,7 @@ func serveStdio(srv *server.MCPServer) error {
 
 // serveHTTP speaks MCP over streamable HTTP, which is what a client connecting
 // to a server running as a service needs.
-func serveHTTP(srv *server.MCPServer, addr, path string) error {
+func serveHTTP(srv *server.MCPServer, pool *jira.Pool, addr, path string) error {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
@@ -206,6 +226,12 @@ func serveHTTP(srv *server.MCPServer, addr, path string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Only the HTTP transport outlives any single session, and only there does it
+	// matter: an entry left in the pool keeps a rotated or revoked key in use, so
+	// the cache is swept on the TTL the pool was built with.
+	stopSweeper := startSweeper(pool)
+	defer stopSweeper()
+
 	errs := make(chan error, 1)
 	go func() {
 		log.Printf("ready on %s%s", displayAddr(addr), path)
@@ -225,6 +251,24 @@ func serveHTTP(srv *server.MCPServer, addr, path string) error {
 		defer cancel()
 		return httpSrv.Shutdown(shutdownCtx)
 	}
+}
+
+// startSweeper runs pool.Sweep on a ticker for the life of the process.
+func startSweeper(pool *jira.Pool) func() {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				pool.Sweep()
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 // displayAddr renders a listen address for humans. ":8083" has no host part, and
